@@ -1,0 +1,24 @@
+{
+  "name": "ai-automation-system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal local automation system",
+  "scripts": {
+    "postinstall": "npm install --prefix ui",
+    "dev": "concurrently \"npm run core\" \"npm run orchestrator\" \"npm run ui\"",
+    "ui": "npm --prefix ui run dev",
+    "core": "node core/server.js",
+    "orchestrator": "node core/orchestrator.js",
+    "agent": "python agents/hello.py"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+ui/node_modules/
+ui/.next/
+.env
+.env.*
+data/logs/*.log
+!data/logs/.gitkeep
+data/state/*.json
+!data/state/.gitkeep
+npm-debug.log*
