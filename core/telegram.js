@@ -3,6 +3,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const http = require("http");
 const https = require("https");
 const { geminiChat } = require("./gemini-bridge");
+const { mcPost } = require("./manychat-bridge");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ALLOWED_ID = parseInt(process.env.TELEGRAM_ALLOWED_CHAT_ID, 10);
@@ -119,6 +120,7 @@ const HELP = `
   /agents — agent status
   /lead <name> <phone> — add CRM lead
   /logs — last 20 log lines
+  /mc <path> — raw ManyChat API call
   /help — this menu
 `.trim();
 
@@ -295,6 +297,20 @@ bot.on("message", async msg => {
     } catch (e) {
       bot.editMessageText(`❌ ${activeEngine.toUpperCase()}: ${e.message}`, { chat_id: msg.chat.id, message_id: thinking.message_id });
     }
+  }
+});
+
+// ── /mc ───────────────────────────────────────────────────────────────────────
+
+bot.onText(/\/mc (.+)/, async (msg, match) => {
+  if (!allowed(msg)) return deny(msg.chat.id);
+  const path = match[1].trim();
+  bot.sendMessage(msg.chat.id, `📡 ManyChat: \`${path}\`…`, { parse_mode: "Markdown" });
+  try {
+    const r = await mcPost(path, {}); // simple GET-like POST with empty body
+    bot.sendMessage(msg.chat.id, trunc("```\n" + JSON.stringify(r, null, 2) + "\n```"), { parse_mode: "Markdown" });
+  } catch (e) {
+    bot.sendMessage(msg.chat.id, `❌ ManyChat Error: ${e.message}`);
   }
 });
 
