@@ -6,9 +6,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 const KEY = process.env.NEXT_PUBLIC_API_KEY ?? "";
 
-function headers() {
-  return KEY ? { "X-API-Key": KEY, "Content-Type": "application/json" }
-    : { "Content-Type": "application/json" };
+function headers(): HeadersInit {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (KEY) h["X-API-Key"] = KEY;
+  return h;
 }
 
 async function api(path: string, opts?: RequestInit) {
@@ -30,6 +31,17 @@ type NetIface = { name: string; addresses: { address: string; family: string; in
 type LogEntry = { cmd: string; out: string; err: string; ts: string };
 type Lead = { name: string; phone: string; status: string; date: string; notes?: string };
 
+type BibleStatus = {
+  bibleRootExists: boolean;
+  directories: Record<string, boolean>;
+  scripts: Record<string, boolean>;
+  secrets: { exists: boolean; keys: string[] };
+  allowedTriggers: string[];
+  recentLog: string[];
+  checkedAt: string;
+};
+type TriggerResult = { stdout: string; stderr: string; exitCode: number } | null;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(bytes: number) {
   const gb = bytes / 1e9;
@@ -43,6 +55,7 @@ function fmtUptime(s: number) {
 // ── Nav items ────────────────────────────────────────────────────────────────
 const NAV = [
   { id: "dashboard", icon: "🖥️", label: "Dashboard" },
+  { id: "bible", icon: "📖", label: "BIBLE System" },
   { id: "crm", icon: "💎", label: "IX Ruby CRM" },
   { id: "jarvis", icon: "🌌", label: "JARVIS AI" },
   { id: "terminal", icon: "💻", label: "Terminal" },
@@ -68,6 +81,12 @@ export default function Home() {
   const [network, setNetwork] = useState<NetIface[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
 
+  // BIBLE state
+  const [bible, setBible] = useState<BibleStatus | null>(null);
+  const [triggering, setTriggering] = useState(false);
+  const [triggerResult, setTriggerResult] = useState<TriggerResult>(null);
+  const [triggerError, setTriggerError] = useState("");
+
   // JARVIS AI
   const [jarvisMsg, setJarvisMsg] = useState("");
   const [jarvisChat, setJarvisChat] = useState<{ role: 'user' | 'jarvis', text: string }[]>([]);
@@ -91,7 +110,7 @@ export default function Home() {
   const fetchAll = useCallback(async (quiet = false) => {
     if (!quiet) setSpinning(true);
     try {
-      const [h, s, a, l, p, n, cr] = await Promise.allSettled([
+      const responses = await Promise.allSettled([
         api("/health"),
         api("/api/system"),
         api("/agents"),
@@ -99,7 +118,10 @@ export default function Home() {
         api("/api/processes"),
         api("/api/network"),
         api("/api/crm/sync"),
+        api("/bible/status"),
       ]);
+      const [h, s, a, l, p, n, cr, bb] = responses;
+
       if (h.status === "fulfilled") setHealth(h.value);
       if (s.status === "fulfilled") setSysInfo(s.value);
       if (a.status === "fulfilled") setAgents(Array.isArray(a.value) ? a.value : []);
@@ -107,6 +129,8 @@ export default function Home() {
       if (p.status === "fulfilled") setProcesses(Array.isArray(p.value) ? p.value : []);
       if (n.status === "fulfilled") setNetwork(Array.isArray(n.value) ? n.value : []);
       if (cr.status === "fulfilled") setLeads(cr.value?.data ?? []);
+      if (bb.status === "fulfilled") setBible(bb.value);
+
       if (h.status === "rejected") setError("Cannot reach core API — is the server running?");
       else setError("");
     } catch {
@@ -219,11 +243,32 @@ export default function Home() {
     if (jarvisScrollRef.current) jarvisScrollRef.current.scrollTop = jarvisScrollRef.current.scrollHeight;
   }, [jarvisChat]);
 
-  // ── Kill process ──────────────────────────────────────────────────────────
+  // ── BIBLE Trigger ─────────────────────────────────────────────────────────
+  const runTrigger = async (scriptName: string) => {
+    setTriggering(true);
+    setTriggerResult(null);
+    setTriggerError("");
+    try {
+      const r = await api("/trigger", { method: "POST", body: JSON.stringify({ script: scriptName }) });
+      setTriggerResult(r);
+    } catch (e: any) {
+      setTriggerError(e.message);
+    } finally {
+      setTriggering(false);
+    }
+  };
+
   const killProcess = async (pid: number, name: string) => {
-    if (!confirm(`Kill ${name} (PID ${pid})?`)) return;
-    await api(`/api/processes/${pid}/kill`, { method: "POST" });
-    setTimeout(() => fetchAll(true), 1000);
+    if (!confirm(`Are you sure you want to kill ${name} (PID: ${pid})?`)) return;
+    setSpinning(true);
+    try {
+      await api(`/api/processes/${pid}`, { method: "DELETE" });
+      fetchAll(true);
+    } catch (e) {
+      setError(`Failed to kill process: ${name}`);
+    } finally {
+      setSpinning(false);
+    }
   };
 
   // ── Status badge ──────────────────────────────────────────────────────────
@@ -395,367 +440,495 @@ export default function Home() {
             </>
           )}
 
-          {/* ── TERMINAL ──────────────────────────────────────────────── */}
-          {tab === "terminal" && (
-            <>
+          {/* ── BIBLE SYSTEM ────────────────────────────────────────────── */}
+          {tab === "bible" && (
+            <div className="space-y-6">
               <div className="section-header">
-                <div className="section-title">💻 PowerShell Terminal</div>
-                <button className="btn btn-ghost" onClick={() => setTermHist([])}>Clear</button>
-              </div>
-              <div className="terminal">
-                <div className="terminal-topbar">
-                  <div className="terminal-dot" style={{ background: "#ff5f57" }} />
-                  <div className="terminal-dot" style={{ background: "#ffbd2e" }} />
-                  <div className="terminal-dot" style={{ background: "#28c840" }} />
-                  <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>PowerShell — OpenClaw</span>
-                </div>
-                <div className="terminal-output" ref={termRef}>
-                  {termHist.length === 0 && (
-                    <span className="terminal-line-sys">
-                      {"OpenClaw PowerShell Terminal\nType a command and press Enter or Run\n\n"}
-                    </span>
-                  )}
-                  {termHist.map((entry, i) => (
-                    <div key={i} style={{ marginBottom: 12 }}>
-                      <div className="terminal-line-cmd">PS&gt; {entry.cmd} <span style={{ fontSize: 10, opacity: 0.5 }}>{entry.ts}</span></div>
-                      {entry.out && <div style={{ whiteSpace: "pre-wrap" }}>{entry.out}</div>}
-                      {entry.err && <div className="terminal-line-err" style={{ whiteSpace: "pre-wrap" }}>{entry.err}</div>}
-                    </div>
-                  ))}
-                  {termRunning && <div className="terminal-line-sys">⌛ Running…</div>}
-                </div>
-                <div className="terminal-input-row">
-                  <span className="terminal-prompt">PS&gt;</span>
-                  <input
-                    ref={inputRef}
-                    className="terminal-input"
-                    value={termCmd}
-                    onChange={e => setTermCmd(e.target.value)}
-                    onKeyDown={onTermKey}
-                    placeholder="Enter PowerShell command…"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                  />
-                  <button className="terminal-run-btn" onClick={runCmd} disabled={termRunning || !termCmd.trim()}>
-                    {termRunning ? "…" : "▶ Run"}
-                  </button>
-                </div>
-              </div>
-              <div style={{ marginTop: 10, color: "var(--text-muted)", fontSize: 11 }}>
-                ↑↓ arrow keys for history · Enter to run · Some destructive commands are blocked for safety
-              </div>
-            </>
-          )}
-
-          {/* ── PROCESSES ─────────────────────────────────────────────── */}
-          {tab === "processes" && (
-            <>
-              <div className="section-header">
-                <div className="section-title">⚙️ Running Processes</div>
+                <div className="section-title">📖 BIBLE Infrastructure Status</div>
                 <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Refresh</button>
               </div>
-              <div style={{ marginBottom: 14 }}>
-                <input
-                  className="search-input"
-                  value={procSearch}
-                  onChange={e => setProcSearch(e.target.value)}
-                  placeholder="Search processes…"
-                />
-              </div>
-              <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                <div style={{ overflowX: "auto" }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th><th>PID</th><th>CPU (s)</th><th>RAM</th><th>Kill</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {processes
-                        .filter(p => p.Name?.toLowerCase().includes(procSearch.toLowerCase()))
-                        .map(p => (
-                          <tr key={p.Id}>
-                            <td style={{ color: "var(--accent)" }}>{p.Name}</td>
-                            <td>{p.Id}</td>
-                            <td>{p.CPU ?? "—"}</td>
-                            <td>{p.RAM ? fmt(p.RAM) : "—"}</td>
-                            <td>
-                              <button className="btn btn-danger" style={{ padding: "3px 10px", fontSize: 11 }}
-                                onClick={() => killProcess(p.Id, p.Name)}>
-                                ✕ Kill
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                  {processes.length === 0 && <div className="empty">No processes loaded</div>}
-                </div>
-              </div>
-            </>
-          )}
 
-          {/* ── AGENTS ────────────────────────────────────────────────── */}
-          {tab === "agents" && (
-            <>
-              <div className="section-header">
-                <div className="section-title">🤖 Agent Manager</div>
-                <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Refresh</button>
-              </div>
-              {agents.length === 0 ? (
-                <div className="card"><div className="empty">No agents registered yet</div></div>
+              {!bible ? (
+                <div className="card"><div className="empty">Loading BIBLE status...</div></div>
               ) : (
-                <div className="agent-grid">
-                  {agents.map(a => (
-                    <div key={a.name} className="agent-card">
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                        <div className="agent-name">{a.name}</div>
-                        <span className={`agent-status ${a.status}`}>
-                          <span className="status-dot-wrap">
-                            {a.status === "running" && <span className="status-dot-ring" />}
-                            <span className="status-dot" />
-                          </span>
-                          {a.status}
-                        </span>
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="card">
+                      <div className="card-title">Core Components</div>
+                      <div className="flex flex-wrap gap-3 mt-3">
+                        <div className={`status-badge ${bible.bibleRootExists ? 'online' : 'offline'}`}>
+                          {bible.bibleRootExists ? '✅' : '❌'} C:\BIBLE
+                        </div>
+                        <div className={`status-badge ${bible.secrets.exists ? 'online' : 'offline'}`}>
+                          {bible.secrets.exists ? '✅' : '❌'} secrets.json
+                        </div>
                       </div>
-                      <div style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.8 }}>
-                        {a.pid && <div>PID: <span style={{ color: "var(--text-primary)" }}>{a.pid}</span></div>}
-                        {a.startedAt && <div>Started: <span style={{ color: "var(--text-primary)" }}>{new Date(a.startedAt).toLocaleString()}</span></div>}
-                        {a.lastHeartbeat && <div>Heartbeat: <span style={{ color: "var(--green)" }}>{new Date(a.lastHeartbeat).toLocaleTimeString()}</span></div>}
+                      {bible.secrets.exists && (
+                        <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-muted)" }}>
+                          Keys: {bible.secrets.keys.join(", ")}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="card">
+                      <div className="card-title">Statistics</div>
+                      <div className="grid grid-cols-2 gap-4 mt-3">
+                        <div>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Scripts</div>
+                          <div style={{ fontSize: 20, fontWeight: 800 }}>
+                            {Object.values(bible.scripts).filter(Boolean).length} / {Object.keys(bible.scripts).length}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Directories</div>
+                          <div style={{ fontSize: 20, fontWeight: 800 }}>
+                            {Object.values(bible.directories).filter(Boolean).length} / {Object.keys(bible.directories).length}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                  </div>
+
+                  <div className="card">
+                    <div className="card-title">🚀 Remote Triggers</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+                      Authorized scripts available for execution via API.
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      {bible.allowedTriggers.map(name => (
+                        <button
+                          key={name}
+                          disabled={triggering}
+                          onClick={() => runTrigger(name)}
+                          className="terminal-run-btn"
+                          style={{ height: 36, padding: "0 15px", fontSize: 12 }}
+                        >
+                          {triggering ? "..." : `▶ ${name}`}
+                        </button>
+                      ))}
+                    </div>
+
+                    {triggerError && (
+                      <div className="error-banner" style={{ marginTop: 15 }}>⚠️ {triggerError}</div>
+                    )}
+
+                    {triggerResult && (
+                      <div className="terminal" style={{ marginTop: 15, padding: 12, borderRadius: 8 }}>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
+                          Exit Code: {triggerResult.exitCode}
+                        </div>
+                        <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
+                          {triggerResult.stdout}
+                          {triggerResult.stderr && <div style={{ color: "var(--red)", marginTop: 8 }}>{triggerResult.stderr}</div>}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="card">
+                      <div className="card-title">Folder Map</div>
+                      <div className="space-y-2 mt-3">
+                        {Object.entries(bible.directories).map(([dir, exists]) => (
+                          <div key={dir} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                            <span style={{ color: "var(--text-muted)" }}>{dir}</span>
+                            <span style={{ color: exists ? "var(--green)" : "var(--red)" }}>{exists ? "EXISTS" : "MISSING"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="card">
+                      <div className="card-title">Holy Spirit Log</div>
+                      <div className="terminal" style={{ marginTop: 12, padding: 10, maxHeight: 200, overflowY: "auto" }}>
+                        {bible.recentLog.length > 0 ? (
+                          bible.recentLog.map((line, i) => <div key={i} style={{ fontSize: 11 }}>{line}</div>)
+                        ) : (
+                          <div className="empty">No recent logs</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
-            </>
-          )}
-
-          {/* ── LOGS ──────────────────────────────────────────────────── */}
-          {tab === "logs" && (
-            <>
-              <div className="section-header">
-                <div className="section-title">📋 Live Logs</div>
-                <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Refresh</button>
-              </div>
-              <div className="terminal">
-                <div className="terminal-topbar">
-                  <div className="terminal-dot" style={{ background: "#ff5f57" }} />
-                  <div className="terminal-dot" style={{ background: "#ffbd2e" }} />
-                  <div className="terminal-dot" style={{ background: "#28c840" }} />
-                  <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>hello-agent log — auto-refresh 6s</span>
-                </div>
-                <div className="terminal-output" style={{ maxHeight: 500 }}>
-                  {logs.length === 0
-                    ? <span className="terminal-line-sys">No log lines yet…</span>
-                    : logs.map((l, i) => <div key={i}>{l}</div>)}
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* ── JARVIS ───────────────────────────────────────────────── */}
-          {tab === "jarvis" && (
-            <div style={{ height: 'calc(100vh - 180px)', display: 'flex', flexDirection: 'column' }}>
-              <div className="section-header">
-                <div className="section-title">🌌 JARVIS Intelligence</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  {speaking && <button className="btn btn-danger" onClick={() => window.speechSynthesis.cancel()}>⏹ Stop Voice</button>}
-                  <button className="btn btn-ghost" onClick={() => setJarvisChat([])}>Clear History</button>
-                </div>
-              </div>
-
-              <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}>
-                <div
-                  ref={jarvisScrollRef}
-                  style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, background: 'rgba(0,0,0,0.2)' }}
-                >
-                  {jarvisChat.length === 0 && (
-                    <div style={{ textAlign: 'center', marginTop: 100, opacity: 0.5 }}>
-                      <div style={{ fontSize: 48, marginBottom: 20 }}>🌌</div>
-                      <div style={{ fontWeight: 800, fontSize: 18 }}>I am online and listening.</div>
-                      <div style={{ fontSize: 14 }}>Ask me about leads, system status, or the 9Ruby ecosystem.</div>
-                    </div>
-                  )}
-                  {jarvisChat.map((m, i) => (
-                    <div key={i} style={{
-                      alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-                      maxWidth: '80%',
-                      background: m.role === 'user' ? 'var(--accent)' : 'rgba(255,255,255,0.05)',
-                      padding: '12px 18px',
-                      borderRadius: m.role === 'user' ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
-                      fontSize: 14,
-                      lineHeight: 1.5,
-                      border: m.role === 'jarvis' ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                      color: m.role === 'user' ? '#000' : '#fff'
-                    }}>
-                      {m.text}
-                    </div>
-                  ))}
-                  {spinning && <div style={{ opacity: 0.5, fontSize: 12 }}>JARVIS is thinking...</div>}
-                </div>
-
-                <div className="terminal-input-row" style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                  <button
-                    onClick={startListening}
-                    style={{
-                      width: 40, height: 40, borderRadius: '50%', background: listening ? 'var(--red)' : 'rgba(255,255,255,0.1)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, border: 'none', cursor: 'pointer',
-                      transition: 'all 0.3s'
-                    }}
-                    className={listening ? 'pulsing' : ''}
-                  >
-                    {listening ? '⏺' : '🎤'}
-                  </button>
-                  <input
-                    className="terminal-input"
-                    value={jarvisMsg}
-                    onChange={e => setJarvisMsg(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && askJarvis(jarvisMsg)}
-                    placeholder={listening ? "Listening..." : "Type or speak to JARVIS..."}
-                  />
-                  <button className="terminal-run-btn" onClick={() => askJarvis(jarvisMsg)} disabled={spinning || !jarvisMsg.trim()}>
-                    {spinning ? "..." : "Send"}
-                  </button>
-                </div>
-              </div>
             </div>
           )}
 
-          {/* ── CRM ──────────────────────────────────────────────────── */}
-          {tab === "crm" && (
-            <>
-              <div className="section-header">
-                <div className="section-title">💎 IX Ruby CRM Management</div>
-                <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Sync Cloud</button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div className="card md:col-span-1">
-                  <div className="card-title">Add New Lead</div>
-                  <form onSubmit={async (e) => {
-                    e.preventDefault();
-                    const fd = new FormData(e.currentTarget);
-                    const name = fd.get("name") as string;
-                    const phone = fd.get("phone") as string;
-                    if (!name || !phone) return;
-                    setSpinning(true);
-                    try {
-                      await api("/api/crm/leads", {
-                        method: "POST",
-                        body: JSON.stringify({ name, phone, notes: "Added via Dashboard" })
-                      });
-                      fetchAll(true);
-                      (e.target as HTMLFormElement).reset();
-                    } catch (err) {
-                      setError("Failed to add lead");
-                    } finally {
-                      setSpinning(false);
-                    }
-                  }}>
-                    <div style={{ marginBottom: 12 }}>
-                      <label style={{ display: "block", fontSize: 12, marginBottom: 4, color: "var(--text-muted)" }}>Name</label>
-                      <input name="name" className="search-input" required />
-                    </div>
-                    <div style={{ marginBottom: 16 }}>
-                      <label style={{ display: "block", fontSize: 12, marginBottom: 4, color: "var(--text-muted)" }}>Phone</label>
-                      <input name="phone" className="search-input" required />
-                    </div>
-                    <button type="submit" className="terminal-run-btn" style={{ width: "100%", height: 40 }}>
-                      🚀 Capture Lead
+          {/* ── TERMINAL ──────────────────────────────────────────────── */}
+          {
+            tab === "terminal" && (
+              <>
+                <div className="section-header">
+                  <div className="section-title">💻 PowerShell Terminal</div>
+                  <button className="btn btn-ghost" onClick={() => setTermHist([])}>Clear</button>
+                </div>
+                <div className="terminal">
+                  <div className="terminal-topbar">
+                    <div className="terminal-dot" style={{ background: "#ff5f57" }} />
+                    <div className="terminal-dot" style={{ background: "#ffbd2e" }} />
+                    <div className="terminal-dot" style={{ background: "#28c840" }} />
+                    <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>PowerShell — OpenClaw</span>
+                  </div>
+                  <div className="terminal-output" ref={termRef}>
+                    {termHist.length === 0 && (
+                      <span className="terminal-line-sys">
+                        {"OpenClaw PowerShell Terminal\nType a command and press Enter or Run\n\n"}
+                      </span>
+                    )}
+                    {termHist.map((entry, i) => (
+                      <div key={i} style={{ marginBottom: 12 }}>
+                        <div className="terminal-line-cmd">PS&gt; {entry.cmd} <span style={{ fontSize: 10, opacity: 0.5 }}>{entry.ts}</span></div>
+                        {entry.out && <div style={{ whiteSpace: "pre-wrap" }}>{entry.out}</div>}
+                        {entry.err && <div className="terminal-line-err" style={{ whiteSpace: "pre-wrap" }}>{entry.err}</div>}
+                      </div>
+                    ))}
+                    {termRunning && <div className="terminal-line-sys">⌛ Running…</div>}
+                  </div>
+                  <div className="terminal-input-row">
+                    <span className="terminal-prompt">PS&gt;</span>
+                    <input
+                      ref={inputRef}
+                      className="terminal-input"
+                      value={termCmd}
+                      onChange={e => setTermCmd(e.target.value)}
+                      onKeyDown={onTermKey}
+                      placeholder="Enter PowerShell command…"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                    />
+                    <button className="terminal-run-btn" onClick={runCmd} disabled={termRunning || !termCmd.trim()}>
+                      {termRunning ? "…" : "▶ Run"}
                     </button>
-                  </form>
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                    <div style={{ overflowX: "auto" }}>
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th>Name</th>
-                            <th>Phone</th>
-                            <th>Status</th>
-                            <th>Date</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {leads.length > 0 ? (
-                            leads.map((l, i) => (
-                              <tr key={i}>
-                                <td style={{ color: "var(--accent)", fontWeight: 700 }}>{l.name}</td>
-                                <td>{l.phone}</td>
-                                <td>
-                                  <span style={{
-                                    padding: "2px 8px",
-                                    background: "rgba(34,197,94,0.1)",
-                                    color: "rgb(34,197,94)",
-                                    borderRadius: 8,
-                                    fontSize: 10,
-                                    fontWeight: 700
-                                  }}>
-                                    {l.status}
-                                  </span>
-                                </td>
-                                <td style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                                  {l.date ? new Date(l.date).toLocaleDateString() : '—'}
-                                </td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr><td colSpan={4} className="empty">No leads captured yet</td></tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
                   </div>
                 </div>
-              </div>
+                <div style={{ marginTop: 10, color: "var(--text-muted)", fontSize: 11 }}>
+                  ↑↓ arrow keys for history · Enter to run · Some destructive commands are blocked for safety
+                </div>
+              </>
+            )
+          }
 
-              <div className="card" style={{ background: "rgba(255,0,51,0.02)", border: "1px dashed rgba(255,0,51,0.2)" }}>
-                <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-                  <div style={{ fontSize: 24 }}>🛡️</div>
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: 14 }}>Cloud Sync Active</div>
-                    <div style={{ fontSize: 12, opacity: 0.6 }}>Every lead captured here is instantly mirrored to Google Sheets and Firebase.</div>
+          {/* ── PROCESSES ─────────────────────────────────────────────── */}
+          {
+            tab === "processes" && (
+              <>
+                <div className="section-header">
+                  <div className="section-title">⚙️ Running Processes</div>
+                  <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Refresh</button>
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <input
+                    className="search-input"
+                    value={procSearch}
+                    onChange={e => setProcSearch(e.target.value)}
+                    placeholder="Search processes…"
+                  />
+                </div>
+                <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Name</th><th>PID</th><th>CPU (s)</th><th>RAM</th><th>Kill</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {processes
+                          .filter(p => p.Name?.toLowerCase().includes(procSearch.toLowerCase()))
+                          .map(p => (
+                            <tr key={p.Id}>
+                              <td style={{ color: "var(--accent)" }}>{p.Name}</td>
+                              <td>{p.Id}</td>
+                              <td>{p.CPU ?? "—"}</td>
+                              <td>{p.RAM ? fmt(p.RAM) : "—"}</td>
+                              <td>
+                                <button className="btn btn-danger" style={{ padding: "3px 10px", fontSize: 11 }}
+                                  onClick={() => killProcess(p.Id, p.Name)}>
+                                  ✕ Kill
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                    {processes.length === 0 && <div className="empty">No processes loaded</div>}
                   </div>
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )
+          }
 
-          {/* ── NETWORK ───────────────────────────────────────────────── */}
-          {tab === "network" && (
-            <>
-              <div className="section-header">
-                <div className="section-title">🌐 Network Interfaces</div>
-              </div>
-              <div style={{ display: "grid", gap: 14 }}>
-                {network.filter(iface => iface.addresses.some(a => !a.internal)).map(iface => (
-                  <div key={iface.name} className="card">
-                    <div className="card-title">
-                      <span className="iface-tag">{iface.name}</span>
-                    </div>
-                    {iface.addresses.map((a, i) => (
-                      <div key={i} style={{ display: "flex", gap: 16, alignItems: "center", padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                        <span style={{
-                          background: a.family === "IPv4" ? "var(--accent-dim)" : "rgba(99,102,241,0.15)",
-                          border: `1px solid ${a.family === "IPv4" ? "var(--border-bright)" : "rgba(99,102,241,0.3)"}`,
-                          color: a.family === "IPv4" ? "var(--accent)" : "#818cf8",
-                          fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99
-                        }}>{a.family}</span>
-                        <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 13, color: "var(--text-primary)", flex: 1 }}>{a.address}</span>
-                        {a.internal && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>internal</span>}
+          {/* ── AGENTS ────────────────────────────────────────────────── */}
+          {
+            tab === "agents" && (
+              <>
+                <div className="section-header">
+                  <div className="section-title">🤖 Agent Manager</div>
+                  <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Refresh</button>
+                </div>
+                {agents.length === 0 ? (
+                  <div className="card"><div className="empty">No agents registered yet</div></div>
+                ) : (
+                  <div className="agent-grid">
+                    {agents.map(a => (
+                      <div key={a.name} className="agent-card">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                          <div className="agent-name">{a.name}</div>
+                          <span className={`agent-status ${a.status}`}>
+                            <span className="status-dot-wrap">
+                              {a.status === "running" && <span className="status-dot-ring" />}
+                              <span className="status-dot" />
+                            </span>
+                            {a.status}
+                          </span>
+                        </div>
+                        <div style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.8 }}>
+                          {a.pid && <div>PID: <span style={{ color: "var(--text-primary)" }}>{a.pid}</span></div>}
+                          {a.startedAt && <div>Started: <span style={{ color: "var(--text-primary)" }}>{new Date(a.startedAt).toLocaleString()}</span></div>}
+                          {a.lastHeartbeat && <div>Heartbeat: <span style={{ color: "var(--green)" }}>{new Date(a.lastHeartbeat).toLocaleTimeString()}</span></div>}
+                        </div>
                       </div>
                     ))}
                   </div>
-                ))}
-                {network.length === 0 && <div className="card"><div className="empty">No interfaces loaded</div></div>}
+                )}
+              </>
+            )
+          }
+
+          {/* ── LOGS ──────────────────────────────────────────────────── */}
+          {
+            tab === "logs" && (
+              <>
+                <div className="section-header">
+                  <div className="section-title">📋 Live Logs</div>
+                  <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Refresh</button>
+                </div>
+                <div className="terminal">
+                  <div className="terminal-topbar">
+                    <div className="terminal-dot" style={{ background: "#ff5f57" }} />
+                    <div className="terminal-dot" style={{ background: "#ffbd2e" }} />
+                    <div className="terminal-dot" style={{ background: "#28c840" }} />
+                    <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>hello-agent log — auto-refresh 6s</span>
+                  </div>
+                  <div className="terminal-output" style={{ maxHeight: 500 }}>
+                    {logs.length === 0
+                      ? <span className="terminal-line-sys">No log lines yet…</span>
+                      : logs.map((l, i) => <div key={i}>{l}</div>)}
+                  </div>
+                </div>
+              </>
+            )
+          }
+
+          {/* ── JARVIS ───────────────────────────────────────────────── */}
+          {
+            tab === "jarvis" && (
+              <div style={{ height: 'calc(100vh - 180px)', display: 'flex', flexDirection: 'column' }}>
+                <div className="section-header">
+                  <div className="section-title">🌌 JARVIS Intelligence</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {speaking && <button className="btn btn-danger" onClick={() => window.speechSynthesis.cancel()}>⏹ Stop Voice</button>}
+                    <button className="btn btn-ghost" onClick={() => setJarvisChat([])}>Clear History</button>
+                  </div>
+                </div>
+
+                <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}>
+                  <div
+                    ref={jarvisScrollRef}
+                    style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16, background: 'rgba(0,0,0,0.2)' }}
+                  >
+                    {jarvisChat.length === 0 && (
+                      <div style={{ textAlign: 'center', marginTop: 100, opacity: 0.5 }}>
+                        <div style={{ fontSize: 48, marginBottom: 20 }}>🌌</div>
+                        <div style={{ fontWeight: 800, fontSize: 18 }}>I am online and listening.</div>
+                        <div style={{ fontSize: 14 }}>Ask me about leads, system status, or the 9Ruby ecosystem.</div>
+                      </div>
+                    )}
+                    {jarvisChat.map((m, i) => (
+                      <div key={i} style={{
+                        alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                        maxWidth: '80%',
+                        background: m.role === 'user' ? 'var(--accent)' : 'rgba(255,255,255,0.05)',
+                        padding: '12px 18px',
+                        borderRadius: m.role === 'user' ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
+                        fontSize: 14,
+                        lineHeight: 1.5,
+                        border: m.role === 'jarvis' ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                        color: m.role === 'user' ? '#000' : '#fff'
+                      }}>
+                        {m.text}
+                      </div>
+                    ))}
+                    {spinning && <div style={{ opacity: 0.5, fontSize: 12 }}>JARVIS is thinking...</div>}
+                  </div>
+
+                  <div className="terminal-input-row" style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <button
+                      onClick={startListening}
+                      style={{
+                        width: 40, height: 40, borderRadius: '50%', background: listening ? 'var(--red)' : 'rgba(255,255,255,0.1)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, border: 'none', cursor: 'pointer',
+                        transition: 'all 0.3s'
+                      }}
+                      className={listening ? 'pulsing' : ''}
+                    >
+                      {listening ? '⏺' : '🎤'}
+                    </button>
+                    <input
+                      className="terminal-input"
+                      value={jarvisMsg}
+                      onChange={e => setJarvisMsg(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && askJarvis(jarvisMsg)}
+                      placeholder={listening ? "Listening..." : "Type or speak to JARVIS..."}
+                    />
+                    <button className="terminal-run-btn" onClick={() => askJarvis(jarvisMsg)} disabled={spinning || !jarvisMsg.trim()}>
+                      {spinning ? "..." : "Send"}
+                    </button>
+                  </div>
+                </div>
               </div>
-            </>
-          )}
-        </main>
-      </div>
-    </div>
+            )
+          }
+
+          {/* ── CRM ──────────────────────────────────────────────────── */}
+          {
+            tab === "crm" && (
+              <>
+                <div className="section-header">
+                  <div className="section-title">💎 IX Ruby CRM Management</div>
+                  <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Sync Cloud</button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                  <div className="card md:col-span-1">
+                    <div className="card-title">Add New Lead</div>
+                    <form onSubmit={async (e) => {
+                      e.preventDefault();
+                      const fd = new FormData(e.currentTarget);
+                      const name = fd.get("name") as string;
+                      const phone = fd.get("phone") as string;
+                      if (!name || !phone) return;
+                      setSpinning(true);
+                      try {
+                        await api("/api/crm/leads", {
+                          method: "POST",
+                          body: JSON.stringify({ name, phone, notes: "Added via Dashboard" })
+                        });
+                        fetchAll(true);
+                        (e.target as HTMLFormElement).reset();
+                      } catch (err) {
+                        setError("Failed to add lead");
+                      } finally {
+                        setSpinning(false);
+                      }
+                    }}>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ display: "block", fontSize: 12, marginBottom: 4, color: "var(--text-muted)" }}>Name</label>
+                        <input name="name" className="search-input" required />
+                      </div>
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ display: "block", fontSize: 12, marginBottom: 4, color: "var(--text-muted)" }}>Phone</label>
+                        <input name="phone" className="search-input" required />
+                      </div>
+                      <button type="submit" className="terminal-run-btn" style={{ width: "100%", height: 40 }}>
+                        🚀 Capture Lead
+                      </button>
+                    </form>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                      <div style={{ overflowX: "auto" }}>
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Name</th>
+                              <th>Phone</th>
+                              <th>Status</th>
+                              <th>Date</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {leads.length > 0 ? (
+                              leads.map((l, i) => (
+                                <tr key={i}>
+                                  <td style={{ color: "var(--accent)", fontWeight: 700 }}>{l.name}</td>
+                                  <td>{l.phone}</td>
+                                  <td>
+                                    <span style={{
+                                      padding: "2px 8px",
+                                      background: "rgba(34,197,94,0.1)",
+                                      color: "rgb(34,197,94)",
+                                      borderRadius: 8,
+                                      fontSize: 10,
+                                      fontWeight: 700
+                                    }}>
+                                      {l.status}
+                                    </span>
+                                  </td>
+                                  <td style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                                    {l.date ? new Date(l.date).toLocaleDateString() : '—'}
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr><td colSpan={4} className="empty">No leads captured yet</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card" style={{ background: "rgba(255,0,51,0.02)", border: "1px dashed rgba(255,0,51,0.2)" }}>
+                  <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                    <div style={{ fontSize: 24 }}>🛡️</div>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: 14 }}>Cloud Sync Active</div>
+                      <div style={{ fontSize: 12, opacity: 0.6 }}>Every lead captured here is instantly mirrored to Google Sheets and Firebase.</div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )
+          }
+
+          {/* ── NETWORK ───────────────────────────────────────────────── */}
+          {
+            tab === "network" && (
+              <>
+                <div className="section-header">
+                  <div className="section-title">🌐 Network Interfaces</div>
+                </div>
+                <div style={{ display: "grid", gap: 14 }}>
+                  {network.filter(iface => iface.addresses.some(a => !a.internal)).map(iface => (
+                    <div key={iface.name} className="card">
+                      <div className="card-title">
+                        <span className="iface-tag">{iface.name}</span>
+                      </div>
+                      {iface.addresses.map((a, i) => (
+                        <div key={i} style={{ display: "flex", gap: 16, alignItems: "center", padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                          <span style={{
+                            background: a.family === "IPv4" ? "var(--accent-dim)" : "rgba(99,102,241,0.15)",
+                            border: `1px solid ${a.family === "IPv4" ? "var(--border-bright)" : "rgba(99,102,241,0.3)"}`,
+                            color: a.family === "IPv4" ? "var(--accent)" : "#818cf8",
+                            fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 99
+                          }}>{a.family}</span>
+                          <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 13, color: "var(--text-primary)", flex: 1 }}>{a.address}</span>
+                          {a.internal && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>internal</span>}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  {network.length === 0 && <div className="card"><div className="empty">No interfaces loaded</div></div>}
+                </div>
+              </>
+            )
+          }
+        </main >
+      </div >
+    </div >
   );
 }

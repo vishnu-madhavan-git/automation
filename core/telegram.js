@@ -2,6 +2,7 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const http = require("http");
 const https = require("https");
+const { geminiChat } = require("./gemini-bridge");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ALLOWED_ID = parseInt(process.env.TELEGRAM_ALLOWED_CHAT_ID, 10);
@@ -9,6 +10,7 @@ const API_URL = process.env.CORE_API_URL || "http://localhost:4000";
 const API_KEY = process.env.API_KEY || "";
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
 const AI_MODEL = process.env.AI_MODEL || "llama3.2:3b";
+let activeEngine = process.env.DEFAULT_AI_ENGINE || "ollama";
 
 if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN not set"); process.exit(1); }
 
@@ -55,6 +57,7 @@ function ollamaChat(prompt, model = AI_MODEL) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ model, prompt, stream: false });
     const opts = new URL(`${OLLAMA_URL}/api/generate`);
+    console.log(`[ollama] Requesting ${model}...`);
     const req = http.request({
       hostname: opts.hostname, port: opts.port || 11434,
       path: "/api/generate", method: "POST",
@@ -63,12 +66,26 @@ function ollamaChat(prompt, model = AI_MODEL) {
       let data = "";
       res.on("data", c => data += c);
       res.on("end", () => {
-        try { resolve(JSON.parse(data).response || "No response"); }
-        catch { resolve(data); }
+        try {
+          const json = JSON.parse(data);
+          console.log(`[ollama] Response received. Keys: ${Object.keys(json).join(", ")}`);
+          resolve(json.response || json.message?.content || "No response field in JSON");
+        }
+        catch {
+          console.error(`[ollama] Parse error. Raw data: ${data.slice(0, 500)}`);
+          resolve(data || "Empty response from Ollama");
+        }
       });
     });
-    req.on("error", reject);
-    req.setTimeout(60000, () => { req.destroy(); reject(new Error("Ollama timeout")); });
+    req.on("error", (e) => {
+      console.error(`[ollama] Connection error: ${e.message}`);
+      reject(e);
+    });
+    req.setTimeout(60000, () => {
+      console.error("[ollama] Timeout reached.");
+      req.destroy();
+      reject(new Error("Ollama timeout"));
+    });
     req.write(body);
     req.end();
   });
@@ -85,6 +102,7 @@ const HELP = `
 
 🤖 *AI*
   /ask \\<question\\> — ask your local AI anything
+  /engine <ollama|gemini> — switch AI brain
   /model — show current AI model
 
 🖥️ *System*
@@ -113,7 +131,16 @@ bot.onText(/\/help/, msg => {
 
 bot.onText(/\/model/, msg => {
   if (!allowed(msg)) return deny(msg.chat.id);
-  bot.sendMessage(msg.chat.id, `🧠 Active model: \`${AI_MODEL}\`\nChange via \`AI_MODEL\` in .env`, { parse_mode: "Markdown" });
+  const info = activeEngine === "ollama" ? `local (\`${AI_MODEL}\`)` : "cloud (`gemini-1.5-flash`)";
+  bot.sendMessage(msg.chat.id, `🧠 *Active Engine*: ${activeEngine.toUpperCase()}\nModel: ${info}`, { parse_mode: "Markdown" });
+});
+
+// ── /engine ───────────────────────────────────────────────────────────────────
+
+bot.onText(/\/engine (ollama|gemini)/, (msg, match) => {
+  if (!allowed(msg)) return deny(msg.chat.id);
+  activeEngine = match[1].toLowerCase();
+  bot.sendMessage(msg.chat.id, `⚙️ AI Engine switched to: *${activeEngine.toUpperCase()}*`, { parse_mode: "Markdown" });
 });
 
 // ── /sys ─────────────────────────────────────────────────────────────────────
@@ -159,15 +186,17 @@ bot.onText(/\/run (.+)/, async (msg, match) => {
 bot.onText(/\/ask (.+)/, async (msg, match) => {
   if (!allowed(msg)) return deny(msg.chat.id);
   const question = match[1].trim();
-  const thinking = await bot.sendMessage(msg.chat.id, `🧠 Thinking with \`${AI_MODEL}\`…`, { parse_mode: "Markdown" });
+  const label = activeEngine === "ollama" ? `local \`${AI_MODEL}\`` : "cloud `GEMINI`";
+  const thinking = await bot.sendMessage(msg.chat.id, `🧠 Thinking with ${label}…`, { parse_mode: "Markdown" });
   try {
-    const answer = await ollamaChat(question);
+    const answer = (activeEngine === "gemini") ? await geminiChat(question) : await ollamaChat(question);
     await bot.deleteMessage(msg.chat.id, thinking.message_id).catch(() => { });
     bot.sendMessage(msg.chat.id, trunc(answer), { parse_mode: "Markdown" }).catch(() =>
       bot.sendMessage(msg.chat.id, trunc(answer))
     );
   } catch (e) {
-    bot.editMessageText(`❌ Ollama error: ${e.message}\n\nIs Ollama running? Try: \`ollama serve\``,
+    const help = activeEngine === "ollama" ? "\n\nIs Ollama running? Try: `ollama serve`" : "\n\nCheck your GEMINI_API_KEY.";
+    bot.editMessageText(`❌ ${activeEngine.toUpperCase()} error: ${e.message}${help}`,
       { chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: "Markdown" });
   }
 });
@@ -250,15 +279,16 @@ bot.on("message", async msg => {
   }
   // Plain text → treat as /ask
   if (text.trim().length > 0) {
-    const thinking = await bot.sendMessage(msg.chat.id, `🧠 _Thinking…_`, { parse_mode: "Markdown" });
+    const label = activeEngine === "ollama" ? `_thinking…_` : `_thinking with cloud…_`;
+    const thinking = await bot.sendMessage(msg.chat.id, `🧠 ${label}`, { parse_mode: "Markdown" });
     try {
-      const answer = await ollamaChat(text);
+      const answer = (activeEngine === "gemini") ? await geminiChat(text) : await ollamaChat(text);
       await bot.deleteMessage(msg.chat.id, thinking.message_id).catch(() => { });
       bot.sendMessage(msg.chat.id, trunc(answer), { parse_mode: "Markdown" }).catch(() =>
         bot.sendMessage(msg.chat.id, trunc(answer))
       );
     } catch (e) {
-      bot.editMessageText(`❌ ${e.message}`, { chat_id: msg.chat.id, message_id: thinking.message_id });
+      bot.editMessageText(`❌ ${activeEngine.toUpperCase()}: ${e.message}`, { chat_id: msg.chat.id, message_id: thinking.message_id });
     }
   }
 });
