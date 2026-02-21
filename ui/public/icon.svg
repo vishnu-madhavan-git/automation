@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="55%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#070d1a"/>
+    </radialGradient>
+    <linearGradient id="topFacet" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff6b8a"/>
+      <stop offset="100%" stop-color="#cc1a3a"/>
+    </linearGradient>
+    <linearGradient id="leftFacet" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7a0020"/>
+      <stop offset="100%" stop-color="#b0002e"/>
+    </linearGradient>
+    <linearGradient id="rightFacet" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#d4003a"/>
+      <stop offset="100%" stop-color="#8a0025"/>
+    </linearGradient>
+    <linearGradient id="bottomFacet" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#9a0028"/>
+      <stop offset="100%" stop-color="#3a000d"/>
+    </linearGradient>
+    <linearGradient id="highlight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#ff9ab0" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="outerGlow">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feColorMatrix in="blur" type="matrix"
+        values="1 0 0 0 0.8  0 0 0 0 0  0 0 0 0 0.1  0 0 0 0.6 0" result="coloredBlur"/>
+      <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+
+  <!-- Outer glow ring -->
+  <ellipse cx="256" cy="270" rx="155" ry="145" fill="none"
+    stroke="#cc1a3a" stroke-width="1" opacity="0.25" filter="url(#outerGlow)"/>
+
+  <!-- Ruby gem — classic cut diamond shape -->
+  <!-- Top crown trapezoid -->
+  <polygon points="256,112  360,200  152,200" fill="url(#topFacet)" filter="url(#glow)"/>
+
+  <!-- Left upper facet -->
+  <polygon points="152,200  200,270  256,200" fill="url(#leftFacet)"/>
+
+  <!-- Right upper facet -->
+  <polygon points="360,200  256,200  312,270" fill="url(#rightFacet)"/>
+
+  <!-- Center top facet -->
+  <polygon points="256,200  200,270  256,270  312,270" fill="#c8002e"/>
+
+  <!-- Left lower pavilion -->
+  <polygon points="152,200  200,270  256,400" fill="url(#bottomFacet)"/>
+
+  <!-- Right lower pavilion -->
+  <polygon points="360,200  256,400  312,270" fill="#88001e"/>
+
+  <!-- Center bottom pavilion -->
+  <polygon points="200,270  256,400  312,270  256,270" fill="#a80026"/>
+
+  <!-- Specular highlight top-left — makes it look glass/gem -->
+  <polygon points="256,120  320,195  256,195  200,195"
+    fill="url(#highlight)" opacity="0.55"/>
+
+  <!-- Small bright specular dot -->
+  <ellipse cx="228" cy="158" rx="22" ry="14" fill="white" opacity="0.18"
+    transform="rotate(-20,228,158)"/>
+
+  <!-- Cyan techno edge glow -->
+  <polygon points="256,112  360,200  312,270  256,400  200,270  152,200"
+    fill="none" stroke="#00e5ff" stroke-width="1.5" opacity="0.18"/>
+</svg>

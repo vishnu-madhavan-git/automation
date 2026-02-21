@@ -5,18 +5,25 @@
   "description": "Minimal local automation system",
   "scripts": {
     "postinstall": "npm install --prefix ui",
-    "dev": "concurrently \"npm run core\" \"npm run orchestrator\" \"npm run ui\"",
+    "dev": "concurrently \"npm run core\" \"npm run orchestrator\" \"npm run ui\" \"npm run telegram\"",
     "ui": "npm --prefix ui run dev",
     "core": "node core/server.js",
     "orchestrator": "node core/orchestrator.js",
+    "telegram": "node core/telegram.js",
     "agent": "python agents/hello.py"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.21.2"
+    "dotenv": "^17.3.1",
+    "express": "^4.21.2",
+    "firebase-admin": "^13.6.1",
+    "google-auth-library": "^10.5.0",
+    "google-spreadsheet": "^5.2.0",
+    "node-telegram-bot-api": "^0.67.0"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "sharp": "^0.34.5"
   },
   "engines": {
     "node": "22.x"
