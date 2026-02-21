@@ -69,7 +69,12 @@ function ollamaChat(prompt, model = AI_MODEL) {
         try {
           const json = JSON.parse(data);
           console.log(`[ollama] Response received. Keys: ${Object.keys(json).join(", ")}`);
-          resolve(json.response || json.message?.content || "No response field in JSON");
+          if (json.error) {
+            console.error(`[ollama] Server error: ${json.error}`);
+            resolve(`Ollama Error: ${json.error}`);
+          } else {
+            resolve(json.response || json.message?.content || "No response field in JSON");
+          }
         }
         catch {
           console.error(`[ollama] Parse error. Raw data: ${data.slice(0, 500)}`);
