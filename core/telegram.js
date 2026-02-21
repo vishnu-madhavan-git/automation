@@ -3,6 +3,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const http = require("http");
 const https = require("https");
 const { geminiChat } = require("./gemini-bridge");
+const { callCognitionAgent } = require("./cognition-bridge");
 const { mcPost } = require("./manychat-bridge");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -196,7 +197,13 @@ bot.onText(/\/ask (.+)/, async (msg, match) => {
   const label = activeEngine === "ollama" ? `local \`${AI_MODEL}\`` : "cloud `GEMINI`";
   const thinking = await bot.sendMessage(msg.chat.id, `🧠 Thinking with ${label}…`, { parse_mode: "Markdown" });
   try {
-    const answer = (activeEngine === "gemini") ? await geminiChat(question) : await ollamaChat(question);
+    let answer;
+    if (activeEngine === "gemini") {
+      const result = await callCognitionAgent(question);
+      answer = `*PLAN*: ${result.plan}\n\n*ANSWER*: ${result.answer}`;
+    } else {
+      answer = await ollamaChat(question);
+    }
     await bot.deleteMessage(msg.chat.id, thinking.message_id).catch(() => { });
     bot.sendMessage(msg.chat.id, trunc(answer), { parse_mode: "Markdown" }).catch(() =>
       bot.sendMessage(msg.chat.id, trunc(answer))
@@ -272,24 +279,46 @@ bot.onText(/\/logs/, async msg => {
   }
 });
 
-// ── free text — send to Ollama if not a command ───────────────────────────────
+// ── free text — send to AI if not a command ───────────────────────────────
 
 bot.on("message", async msg => {
   if (!allowed(msg)) return;
   const text = msg.text || "";
+  const known = ["/start", "/help", "/status", "/agents", "/logs", "/sys", "/run", "/ask", "/model", "/think"];
+
   if (text.startsWith("/")) {
-    const known = ["/start", "/help", "/status", "/agents", "/logs", "/sys", "/run", "/ask", "/model"];
     if (!known.some(cmd => text.startsWith(cmd))) {
       bot.sendMessage(msg.chat.id, "Unknown command. Try /help");
     }
     return;
   }
+
+  // Custom /think command logic (if not handled by onText)
+  if (text.startsWith("/think ")) {
+    const query = text.replace("/think ", "").trim();
+    const thinking = await bot.sendMessage(msg.chat.id, `🧪 _Thinking agentically..._`, { parse_mode: "Markdown" });
+    try {
+      const result = await callCognitionAgent(query);
+      await bot.deleteMessage(msg.chat.id, thinking.message_id).catch(() => { });
+      bot.sendMessage(msg.chat.id, `🧩 *REASONING*: ${result.plan}\n\n💡 *RESULT*: ${result.answer}`, { parse_mode: "Markdown" });
+    } catch (e) {
+      bot.editMessageText(`❌ Agent Error: ${e.message}`, { chat_id: msg.chat.id, message_id: thinking.message_id });
+    }
+    return;
+  }
+
   // Plain text → treat as /ask
   if (text.trim().length > 0) {
     const label = activeEngine === "ollama" ? `_thinking…_` : `_thinking with cloud…_`;
     const thinking = await bot.sendMessage(msg.chat.id, `🧠 ${label}`, { parse_mode: "Markdown" });
     try {
-      const answer = (activeEngine === "gemini") ? await geminiChat(text) : await ollamaChat(text);
+      let answer;
+      if (activeEngine === "gemini") {
+        const result = await callCognitionAgent(text);
+        answer = result.answer; // Use simple answer for free text
+      } else {
+        answer = await ollamaChat(text);
+      }
       await bot.deleteMessage(msg.chat.id, thinking.message_id).catch(() => { });
       bot.sendMessage(msg.chat.id, trunc(answer), { parse_mode: "Markdown" }).catch(() =>
         bot.sendMessage(msg.chat.id, trunc(answer))
