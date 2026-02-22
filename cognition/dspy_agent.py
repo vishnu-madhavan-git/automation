@@ -21,7 +21,7 @@ class GoogleAIStudioLM(dspy.LM):
         return [response.text]
 
 # Configure Gemini via Custom Bridge
-gemini = GoogleAIStudioLM('gemini-1.5-flash', api_key=os.getenv("GEMINI_API_KEY"))
+gemini = GoogleAIStudioLM('gemini-2.0-flash', api_key=os.getenv("GEMINI_API_KEY"))
 dspy.settings.configure(lm=gemini)
 
 class AgenticSignature(dspy.Signature):
