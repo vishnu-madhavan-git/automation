@@ -14,6 +14,7 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:3000";
 const sheets = require("./sheets");
 const firebase = require("./firebase");
 const memory = require("./memory");
+const github = require("./github");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const LOG_DIR = path.join(ROOT_DIR, "data", "logs");
@@ -291,6 +292,18 @@ Context from memory:\n${context}\n\nUser Question: ${question}\n\nAnswer concise
 
     const answer = await ollama(prompt);
     res.json({ answer, context: results.map(r => r.text) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GitHub Multi-Account ─────────────────────────────────────────────────────
+
+/** GET /api/github/repos — aggregate repos from all configured GitHub accounts */
+app.get("/api/github/repos", auth, async (_req, res) => {
+  try {
+    const data = await github.getAllAccounts();
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

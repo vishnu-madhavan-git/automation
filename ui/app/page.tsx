@@ -31,6 +31,19 @@ type NetIface = { name: string; addresses: { address: string; family: string; in
 type LogEntry = { cmd: string; out: string; err: string; ts: string };
 type Lead = { name: string; phone: string; status: string; date: string; notes?: string };
 
+type GitHubRepo = {
+  id: number; name: string; fullName: string; description: string; url: string;
+  language: string | null; stars: number; forks: number; openIssues: number;
+  isPrivate: boolean; isFork: boolean; isArchived: boolean;
+  defaultBranch: string; pushedAt: string; updatedAt: string; topics: string[];
+};
+type GitHubAccount = {
+  login: string; name: string; avatarUrl: string;
+  publicRepos: number; privateRepos: number; repos: GitHubRepo[];
+  error?: string;
+};
+type GitHubData = { accounts: GitHubAccount[]; totalRepos: number; fetchedAt: string; configured: boolean } | null;
+
 type BibleStatus = {
   bibleRootExists: boolean;
   directories: Record<string, boolean>;
@@ -58,6 +71,7 @@ const NAV = [
   { id: "bible", icon: "📖", label: "BIBLE System" },
   { id: "crm", icon: "💎", label: "IX Ruby CRM" },
   { id: "jarvis", icon: "🌌", label: "JARVIS AI" },
+  { id: "github", icon: "🐙", label: "GitHub" },
   { id: "terminal", icon: "💻", label: "Terminal" },
   { id: "processes", icon: "⚙️", label: "Processes" },
   { id: "agents", icon: "🤖", label: "Agents" },
@@ -80,6 +94,8 @@ export default function Home() {
   const [processes, setProcesses] = useState<Process[]>([]);
   const [network, setNetwork] = useState<NetIface[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [githubData, setGithubData] = useState<GitHubData>(null);
+  const [githubSearch, setGithubSearch] = useState("");
 
   // BIBLE state
   const [bible, setBible] = useState<BibleStatus | null>(null);
@@ -119,8 +135,9 @@ export default function Home() {
         api("/api/network"),
         api("/api/crm/sync"),
         api("/bible/status"),
+        api("/api/github/repos"),
       ]);
-      const [h, s, a, l, p, n, cr, bb] = responses;
+      const [h, s, a, l, p, n, cr, bb, gh] = responses; // health, system, agents, logs, processes, network, crm, bible, github
 
       if (h.status === "fulfilled") setHealth(h.value);
       if (s.status === "fulfilled") setSysInfo(s.value);
@@ -130,6 +147,7 @@ export default function Home() {
       if (n.status === "fulfilled") setNetwork(Array.isArray(n.value) ? n.value : []);
       if (cr.status === "fulfilled") setLeads(cr.value?.data ?? []);
       if (bb.status === "fulfilled") setBible(bb.value);
+      if (gh.status === "fulfilled") setGithubData(gh.value);
 
       if (h.status === "rejected") setError("Cannot reach core API — is the server running?");
       else setError("");
@@ -894,6 +912,180 @@ export default function Home() {
               </>
             )
           }
+
+          {/* ── GITHUB ────────────────────────────────────────────────── */}
+          {tab === "github" && (
+            <>
+              <div className="section-header">
+                <div className="section-title">🐙 GitHub Repositories</div>
+                <button className="btn btn-ghost" onClick={() => fetchAll()}>↻ Refresh</button>
+              </div>
+
+              {!githubData ? (
+                <div className="card"><div className="empty">Loading GitHub data…</div></div>
+              ) : !githubData.configured ? (
+                <div className="card">
+                  <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+                    <div style={{ fontSize: 32 }}>🔑</div>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 8 }}>No GitHub Tokens Configured</div>
+                      <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.7 }}>
+                        Add your GitHub Personal Access Tokens to <code style={{ background: "var(--bg-card)", padding: "1px 6px", borderRadius: 4, fontFamily: "JetBrains Mono, monospace" }}>.env</code> to bring all your repos into one place.
+                      </div>
+                      <pre style={{
+                        background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8,
+                        padding: "12px 16px", marginTop: 14, fontFamily: "JetBrains Mono, monospace",
+                        fontSize: 12, color: "var(--accent)", overflowX: "auto"
+                      }}>{`# .env — add one token per account, comma-separated\nGITHUB_TOKENS=ghp_token_account1,ghp_token_account2`}</pre>
+                      <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
+                        Generate tokens at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>github.com/settings/tokens</a>. The <code style={{ fontFamily: "JetBrains Mono, monospace" }}>repo</code> scope is sufficient for reading repositories.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Summary bar */}
+                  <div className="stat-grid" style={{ marginBottom: 20 }}>
+                    <div className="stat-card">
+                      <div className="stat-icon">👤</div>
+                      <div className="stat-label">Accounts</div>
+                      <div className="stat-value">{githubData.accounts.filter(a => !a.error).length}</div>
+                      <div className="stat-sub">connected</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-icon">📦</div>
+                      <div className="stat-label">Total Repos</div>
+                      <div className="stat-value">{githubData.totalRepos}</div>
+                      <div className="stat-sub">across all accounts</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-icon">⭐</div>
+                      <div className="stat-label">Total Stars</div>
+                      <div className="stat-value">
+                        {githubData.accounts.flatMap(a => a.repos ?? []).reduce((s, r) => s + r.stars, 0)}
+                      </div>
+                      <div className="stat-sub">all repos</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-icon">🔒</div>
+                      <div className="stat-label">Private Repos</div>
+                      <div className="stat-value">
+                        {githubData.accounts.flatMap(a => a.repos ?? []).filter(r => r.isPrivate).length}
+                      </div>
+                      <div className="stat-sub">of {githubData.totalRepos} total</div>
+                    </div>
+                  </div>
+
+                  {/* Search */}
+                  <div style={{ marginBottom: 16 }}>
+                    <input
+                      type="text"
+                      placeholder="🔍  Search repos by name, language or topic…"
+                      value={githubSearch}
+                      onChange={e => setGithubSearch(e.target.value)}
+                      style={{
+                        width: "100%", padding: "10px 14px", borderRadius: 8,
+                        background: "var(--bg-card)", border: "1px solid var(--border)",
+                        color: "var(--text-primary)", fontSize: 13, outline: "none"
+                      }}
+                    />
+                  </div>
+
+                  {/* Per-account sections */}
+                  {githubData.accounts.map((account, ai) => {
+                    if (account.error) {
+                      return (
+                        <div key={ai} className="card" style={{ marginBottom: 16, borderColor: "var(--red-dim)" }}>
+                          <div style={{ color: "var(--red)" }}>⚠️ Account #{ai + 1} failed: {account.error}</div>
+                        </div>
+                      );
+                    }
+                    const q = githubSearch.toLowerCase();
+                    const filtered = (account.repos || []).filter(r =>
+                      !q ||
+                      r.name.toLowerCase().includes(q) ||
+                      (r.description || "").toLowerCase().includes(q) ||
+                      (r.language || "").toLowerCase().includes(q) ||
+                      r.topics.some(t => t.toLowerCase().includes(q))
+                    );
+                    return (
+                      <div key={ai} style={{ marginBottom: 24 }}>
+                        <div className="section-header" style={{ marginBottom: 12 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            {account.avatarUrl && (
+                              <img src={account.avatarUrl} alt={account.login} style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid var(--border)" }} />
+                            )}
+                            <div>
+                              <span style={{ fontWeight: 700, fontSize: 14 }}>@{account.login}</span>
+                              {account.name !== account.login && (
+                                <span style={{ fontSize: 12, color: "var(--text-muted)", marginLeft: 8 }}>{account.name}</span>
+                              )}
+                            </div>
+                            <span style={{
+                              fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
+                              background: "var(--accent-dim)", border: "1px solid var(--border-bright)", color: "var(--accent)"
+                            }}>{filtered.length} repo{filtered.length !== 1 ? "s" : ""}</span>
+                          </div>
+                        </div>
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {filtered.length === 0 ? (
+                            <div className="card"><div className="empty">No repos match your search.</div></div>
+                          ) : filtered.map(repo => (
+                            <div key={repo.id} className="card" style={{ padding: "12px 16px" }}>
+                              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                                    <a href={repo.url} target="_blank" rel="noopener noreferrer"
+                                      style={{ fontWeight: 700, fontSize: 14, color: "var(--accent)", textDecoration: "none" }}>
+                                      {repo.name}
+                                    </a>
+                                    {repo.isPrivate && (
+                                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99, background: "var(--yellow-dim)", border: "1px solid rgba(255,211,42,0.3)", color: "var(--yellow)" }}>private</span>
+                                    )}
+                                    {repo.isFork && (
+                                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99, background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>fork</span>
+                                    )}
+                                    {repo.isArchived && (
+                                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99, background: "var(--red-dim)", border: "1px solid rgba(255,71,87,0.3)", color: "var(--red)" }}>archived</span>
+                                    )}
+                                  </div>
+                                  {repo.description && (
+                                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      {repo.description}
+                                    </div>
+                                  )}
+                                  {repo.topics.length > 0 && (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                                      {repo.topics.slice(0, 6).map(t => (
+                                        <span key={t} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 99, background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.25)", color: "#818cf8" }}>{t}</span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>
+                                  {repo.language && (
+                                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)", display: "inline-block" }} />
+                                      {repo.language}
+                                    </span>
+                                  )}
+                                  <span title="Stars">⭐ {repo.stars}</span>
+                                  <span title="Forks">🍴 {repo.forks}</span>
+                                  {repo.openIssues > 0 && <span title="Open Issues" style={{ color: "var(--yellow)" }}>🔴 {repo.openIssues}</span>}
+                                  <span title="Last push" style={{ fontSize: 11 }}>{repo.pushedAt ? new Date(repo.pushedAt).toLocaleDateString() : "—"}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </>
+          )}
 
           {/* ── NETWORK ───────────────────────────────────────────────── */}
           {
