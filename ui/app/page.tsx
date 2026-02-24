@@ -89,7 +89,7 @@ export default function Home() {
 
   // JARVIS AI
   const [jarvisMsg, setJarvisMsg] = useState("");
-  const [jarvisChat, setJarvisChat] = useState<{ role: 'user' | 'jarvis', text: string }[]>([]);
+  const [jarvisChat, setJarvisChat] = useState<{ role: 'user' | 'jarvis', text: string, plan?: string }[]>([]);
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const jarvisScrollRef = useRef<HTMLDivElement>(null);
@@ -229,9 +229,10 @@ export default function Home() {
     setJarvisMsg("");
     setSpinning(true);
     try {
-      const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q }) });
-      setJarvisChat(prev => [...prev, { role: 'jarvis', text: r.answer }]);
-      speak(r.answer);
+      // request agentic reasoning (planning + answer)
+      const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q, agentic: true }) });
+      setJarvisChat(prev => [...prev, { role: 'jarvis', text: r.answer, plan: r.plan }]);
+      if (r.answer) speak(r.answer);
     } catch (e) {
       setError("JARVIS connection failed");
     } finally {
@@ -745,10 +746,30 @@ export default function Home() {
                         <div style={{ fontSize: 14 }}>Ask me about leads, system status, or the 9Ruby ecosystem.</div>
                       </div>
                     )}
-                    {jarvisChat.map((m, i) => (
-                      <div key={i} style={{
+                    <div key={i} style={{
+                      alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                      maxWidth: '80%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8
+                    }}>
+                      {m.plan && (
+                        <div style={{
+                          background: 'rgba(0,0,0,0.3)',
+                          border: '1px solid rgba(0,255,255,0.1)',
+                          borderRadius: '8px',
+                          padding: '10px',
+                          fontSize: '11px',
+                          fontFamily: 'monospace',
+                          color: '#0ff',
+                          opacity: 0.8
+                        }}>
+                          <div style={{ marginBottom: 4, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Step-by-step Reasoning</div>
+                          <div style={{ whiteSpace: 'pre-wrap' }}>{m.plan}</div>
+                        </div>
+                      )}
+                      <div style={{
                         alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-                        maxWidth: '80%',
                         background: m.role === 'user' ? 'var(--accent)' : 'rgba(255,255,255,0.05)',
                         padding: '12px 18px',
                         borderRadius: m.role === 'user' ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
@@ -759,7 +780,7 @@ export default function Home() {
                       }}>
                         {m.text}
                       </div>
-                    ))}
+                    </div>
                     {spinning && <div style={{ opacity: 0.5, fontSize: 12 }}>JARVIS is thinking...</div>}
                   </div>
 

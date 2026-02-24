@@ -2,6 +2,7 @@ import dspy
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
+import litellm
 
 # Load environment variables
 load_dotenv()
@@ -14,15 +15,43 @@ class GoogleAIStudioLM(dspy.LM):
         self.client = genai.GenerativeModel(model_name)
 
     def __call__(self, prompt=None, messages=None, **kwargs):
-        # Respond to DSPy generate calls
         input_text = prompt if prompt is not None else messages[-1]['content']
         response = self.client.generate_content(input_text)
-        # DSPy expects a list of completion strings
         return [response.text]
 
-# Configure Gemini via Custom Bridge
-gemini = GoogleAIStudioLM('gemini-2.0-flash', api_key=os.getenv("GEMINI_API_KEY"))
-dspy.settings.configure(lm=gemini)
+class LiteLLMLM(dspy.LM):
+    """Custom DSPy LM using LiteLLM for multi-provider support (Azure, etc.)."""
+    def __init__(self, model_name, **kwargs):
+        super().__init__(model_name)
+        self.model_name = model_name
+        self.kwargs = kwargs
+
+    def __call__(self, prompt=None, messages=None, **kwargs):
+        input_text = prompt if prompt is not None else messages[-1]['content']
+        response = litellm.completion(
+            model=self.model_name,
+            messages=[{"role": "user", "content": input_text}],
+            **self.kwargs
+        )
+        return [response.choices[0].message.content]
+
+# Configure AI Brain (Preference: Azure -> Gemini)
+if os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+    # Azure Brain Configuration
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+    lm_engine = LiteLLMLM(
+        model_name=f"azure/{deployment}",
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+    )
+    print(f"[*] AI Brain: Azure OpenAI ({deployment})")
+else:
+    # Fallback to Gemini
+    lm_engine = GoogleAIStudioLM('gemini-2.0-flash', api_key=os.getenv("GEMINI_API_KEY"))
+    print("[*] AI Brain: Google Gemini (Local/Edge)")
+
+dspy.settings.configure(lm=lm_engine)
 
 class AgenticSignature(dspy.Signature):
     """

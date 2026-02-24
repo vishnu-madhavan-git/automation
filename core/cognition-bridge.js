@@ -10,7 +10,9 @@ const path = require("path");
 async function callCognitionAgent(query, history = "") {
     return new Promise((resolve, reject) => {
         const pythonProcess = spawn("python", [
-            path.join(__dirname, "..", "cognition", "dspy_agent.py")
+            path.join(__dirname, "..", "cognition", "dspy_agent.py"),
+            query,
+            history
         ], {
             env: { ...process.env, PYTHONUNBUFFERED: "1" }
         });

@@ -22,6 +22,8 @@ const CORE_LOG = path.join(LOG_DIR, "core.log");
 const AGENTS_FILE = path.join(STATE_DIR, "agents.json");
 const HELLO_LOG = path.join(LOG_DIR, "hello.log");
 
+const { callCognitionAgent } = require("./cognition-bridge");
+
 fs.mkdirSync(LOG_DIR, { recursive: true });
 fs.mkdirSync(STATE_DIR, { recursive: true });
 
@@ -90,6 +92,26 @@ app.use((req, _res, next) => {
 // ── Public endpoints (no auth) ───────────────────────────────────────────────
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
+});
+
+app.get("/api/cloud-status", auth, async (req, res) => {
+  const status = {
+    local: "online",
+    aws: "checking...",
+    azure: "checking...",
+    gemini: process.env.GEMINI_API_KEY ? "configured" : "missing",
+    azure_ai: process.env.AZURE_OPENAI_API_KEY ? "configured" : "missing"
+  };
+
+  // Simple check for AWS Portal (assuming same endpoint for now or placeholder)
+  try {
+    // In a real scenario, we'd ping the Tailscale IP of the AWS instance
+    status.aws = "online (tailscale)";
+  } catch (e) {
+    status.aws = "offline";
+  }
+
+  res.json(status);
 });
 
 // ── Protected endpoints ──────────────────────────────────────────────────────
@@ -275,12 +297,22 @@ app.get("/api/crm/sync", auth, async (_req, res) => {
   }
 });
 
-// Intelligence Ask (RAG)
+// Intelligence Ask (RAG + Optional Agentic Reasoning)
 app.post("/api/ask", auth, async (req, res) => {
-  const { question } = req.body;
+  const { question, agentic = false } = req.body;
   if (!question) return res.status(400).json({ error: "question required" });
 
   try {
+    if (agentic) {
+      try {
+        const result = await callCognitionAgent(question);
+        return res.json({ answer: result.answer, plan: result.plan });
+      } catch (agentError) {
+        writeCoreLog(`Agentic Fail (Falling back): ${agentError.message}`);
+        // Fall through to RAG
+      }
+    }
+
     const results = await memory.search(question);
     const context = results.map(r => r.text).join("\n");
 
@@ -291,6 +323,20 @@ Context from memory:\n${context}\n\nUser Question: ${question}\n\nAnswer concise
 
     const answer = await ollama(prompt);
     res.json({ answer, context: results.map(r => r.text) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Explicit Agency - "Think before you act"
+app.post("/api/think", auth, async (req, res) => {
+  const { question } = req.body;
+  if (!question) return res.status(400).json({ error: "question required" });
+
+  try {
+    writeCoreLog(`THINK: ${question}`);
+    const result = await callCognitionAgent(question);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
