@@ -1,6 +1,32 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  LayoutDashboard,
+  BookOpen,
+  Gem,
+  Bot,
+  Terminal,
+  Settings2,
+  Users,
+  ClipboardList,
+  Globe,
+  Compass,
+  Cpu,
+  RefreshCw,
+  Activity,
+  HardDrive,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  RotateCw,
+  ExternalLink,
+  ShieldCheck,
+  Zap,
+  Layout
+} from "lucide-react";
+
+const logo = { src: "/logo.png" };
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
@@ -54,15 +80,16 @@ function fmtUptime(s: number) {
 
 // ── Nav items ────────────────────────────────────────────────────────────────
 const NAV = [
-  { id: "dashboard", icon: "🖥️", label: "Dashboard" },
-  { id: "bible", icon: "📖", label: "BIBLE System" },
-  { id: "crm", icon: "💎", label: "IX Ruby CRM" },
-  { id: "jarvis", icon: "🌌", label: "JARVIS AI" },
-  { id: "terminal", icon: "💻", label: "Terminal" },
-  { id: "processes", icon: "⚙️", label: "Processes" },
-  { id: "agents", icon: "🤖", label: "Agents" },
-  { id: "logs", icon: "📋", label: "Logs" },
-  { id: "network", icon: "🌐", label: "Network" },
+  { id: "dashboard", icon: <LayoutDashboard size={18} color="var(--accent)" />, label: "Dashboard", colorClass: "" },
+  { id: "browser", icon: <Compass size={18} color="var(--accent)" />, label: "AI Browser", colorClass: "cyan" },
+  { id: "bible", icon: <BookOpen size={18} color="var(--gold)" />, label: "BIBLE System", colorClass: "gold" },
+  { id: "crm", icon: <Gem size={18} color="var(--magenta)" />, label: "IX Ruby CRM", colorClass: "magenta" },
+  { id: "jarvis", icon: <Bot size={18} color="var(--accent)" />, label: "JARVIS AI", colorClass: "" },
+  { id: "terminal", icon: <Terminal size={18} color="var(--green)" />, label: "Terminal", colorClass: "green" },
+  { id: "processes", icon: <Settings2 size={18} color="var(--gold)" />, label: "Processes", colorClass: "gold" },
+  { id: "agents", icon: <Users size={18} color="var(--magenta)" />, label: "Agents", colorClass: "magenta" },
+  { id: "logs", icon: <ClipboardList size={18} color="var(--accent)" />, label: "Logs", colorClass: "" },
+  { id: "network", icon: <Globe size={18} color="var(--green)" />, label: "Network", colorClass: "green" },
 ];
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -102,6 +129,13 @@ export default function Home() {
   const [histIdx, setHistIdx] = useState(-1);
   const termRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // AI Browser simulation
+  const [browserLogs, setBrowserLogs] = useState<{ type: string, text: string }[]>([
+    { type: "STRATEGY", text: "Detecting form fields on current page..." },
+    { type: "ACTION", text: "Extracted 12 leads from LinkedIn Sales Navigator." },
+    { type: "VERIFICATION", text: "Cross-referencing with local CRM database." },
+  ]);
 
   // Process search
   const [procSearch, setProcSearch] = useState("");
@@ -203,7 +237,8 @@ export default function Home() {
   };
 
   const startListening = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const win = window as unknown as { SpeechRecognition: any; webkitSpeechRecognition: any };
+    const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert("Speech recognition not supported in this browser.");
       return;
@@ -215,7 +250,7 @@ export default function Home() {
 
     rec.onstart = () => setListening(true);
     rec.onend = () => setListening(false);
-    rec.onresult = (e: any) => {
+    rec.onresult = (e: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => {
       const transcript = e.results[0][0].transcript;
       setJarvisMsg(transcript);
       askJarvis(transcript);
@@ -233,7 +268,7 @@ export default function Home() {
       const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q, agentic: true }) });
       setJarvisChat(prev => [...prev, { role: 'jarvis', text: r.answer, plan: r.plan }]);
       if (r.answer) speak(r.answer);
-    } catch (e) {
+    } catch {
       setError("JARVIS connection failed");
     } finally {
       setSpinning(false);
@@ -252,12 +287,28 @@ export default function Home() {
     try {
       const r = await api("/trigger", { method: "POST", body: JSON.stringify({ script: scriptName }) });
       setTriggerResult(r);
-    } catch (e: any) {
-      setTriggerError(e.message);
+    } catch (e) {
+      setTriggerError(e instanceof Error ? e.message : String(e));
     } finally {
       setTriggering(false);
     }
   };
+
+  useEffect(() => {
+    if (tab !== "browser") return;
+    const interval = setInterval(() => {
+      const simLogs = [
+        { type: "STRATEGY", text: "Analyzing page structure for data patterns..." },
+        { type: "ACTION", text: "Automatically scrolling to load more content..." },
+        { type: "VERIFICATION", text: "Validation of data integrity for item #" + Math.floor(Math.random() * 100) },
+        { type: "ACTION", text: "Syncing batch data to cloud storage..." },
+        { type: "STRATEGY", text: "Optimizing navigation path for efficiency..." }
+      ];
+      const randomLog = simLogs[Math.floor(Math.random() * simLogs.length)];
+      setBrowserLogs(prev => [...prev.slice(-9), randomLog]);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [tab]);
 
   const killProcess = async (pid: number, name: string) => {
     if (!confirm(`Are you sure you want to kill ${name} (PID: ${pid})?`)) return;
@@ -265,7 +316,7 @@ export default function Home() {
     try {
       await api(`/api/processes/${pid}`, { method: "DELETE" });
       fetchAll(true);
-    } catch (e) {
+    } catch {
       setError(`Failed to kill process: ${name}`);
     } finally {
       setSpinning(false);
@@ -295,9 +346,11 @@ export default function Home() {
       {/* Sidebar */}
       <aside className={`sidebar${sideOpen ? " open" : ""}`}>
         <div className="sidebar-logo">
-          <div className="sidebar-logo-icon">🦞</div>
+          <div className="sidebar-logo-icon">
+            <Compass size={24} color="#fff" />
+          </div>
           <div>
-            <div className="sidebar-logo-text">OpenClaw</div>
+            <div className="sidebar-logo-text" style={{ letterSpacing: 1 }}>OpenClaw</div>
             <div className="sidebar-logo-sub">PC Control Panel</div>
           </div>
         </div>
@@ -305,7 +358,7 @@ export default function Home() {
         <nav className="sidebar-nav">
           <div className="nav-section-label">Control</div>
           {NAV.map(n => (
-            <button key={n.id} className={`nav-item${tab === n.id ? " active" : ""}`} onClick={() => goTab(n.id)}>
+            <button key={n.id} className={`nav-item${tab === n.id ? " active " + n.colorClass : ""}`} onClick={() => goTab(n.id)}>
               <span className="nav-icon">{n.icon}</span>
               {n.label}
               {n.id === "agents" && crashedCount > 0 && (
@@ -355,7 +408,7 @@ export default function Home() {
             <>
               <div className="stat-grid">
                 <div className="stat-card">
-                  <div className="stat-icon">⚡</div>
+                  <div className="stat-icon" style={{ color: 'var(--accent)' }}><Cpu size={20} /></div>
                   <div className="stat-label">CPU Usage</div>
                   <div className="stat-value">
                     {sysInfo?.cpuPct != null ? `${sysInfo.cpuPct}%` : "—"}
@@ -367,7 +420,7 @@ export default function Home() {
                 </div>
 
                 <div className="stat-card">
-                  <div className="stat-icon">🧠</div>
+                  <div className="stat-icon" style={{ color: 'var(--magenta)' }}><HardDrive size={20} /></div>
                   <div className="stat-label">RAM Used</div>
                   <div className="stat-value">
                     {sysInfo ? fmt(sysInfo.usedMem) : "—"}
@@ -382,14 +435,14 @@ export default function Home() {
                 </div>
 
                 <div className="stat-card">
-                  <div className="stat-icon">⏱️</div>
+                  <div className="stat-icon" style={{ color: 'var(--gold)' }}><RefreshCw size={20} /></div>
                   <div className="stat-label">Uptime</div>
                   <div className="stat-value" style={{ fontSize: 20 }}>{sysInfo ? fmtUptime(sysInfo.uptime) : "—"}</div>
                   <div className="stat-sub">System running</div>
                 </div>
 
                 <div className="stat-card">
-                  <div className="stat-icon">🤖</div>
+                  <div className="stat-icon" style={{ color: 'var(--green)' }}><Bot size={20} /></div>
                   <div className="stat-label">Agents</div>
                   <div className="stat-value">{agents.length}</div>
                   <div className="stat-sub">
@@ -400,14 +453,14 @@ export default function Home() {
                 </div>
 
                 <div className="stat-card">
-                  <div className="stat-icon">💾</div>
+                  <div className="stat-icon" style={{ color: 'var(--accent)' }}><Settings2 size={20} /></div>
                   <div className="stat-label">Processes</div>
                   <div className="stat-value">{processes.length}</div>
                   <div className="stat-sub">Top by CPU</div>
                 </div>
 
                 <div className="stat-card">
-                  <div className="stat-icon">🖥️</div>
+                  <div className="stat-icon" style={{ color: 'var(--magenta)' }}><Activity size={20} /></div>
                   <div className="stat-label">CPU Cores</div>
                   <div className="stat-value">{sysInfo?.cpuCount ?? "—"}</div>
                   <div className="stat-sub">{sysInfo?.platform ?? "—"}</div>
@@ -746,62 +799,54 @@ export default function Home() {
                         <div style={{ fontSize: 14 }}>Ask me about leads, system status, or the 9Ruby ecosystem.</div>
                       </div>
                     )}
-                    <div key={i} style={{
-                      alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-                      maxWidth: '80%',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 8
-                    }}>
-                      {m.plan && (
-                        <div style={{
-                          background: 'rgba(0,0,0,0.3)',
-                          border: '1px solid rgba(0,255,255,0.1)',
-                          borderRadius: '8px',
-                          padding: '10px',
-                          fontSize: '11px',
-                          fontFamily: 'monospace',
-                          color: '#0ff',
-                          opacity: 0.8
-                        }}>
-                          <div style={{ marginBottom: 4, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Step-by-step Reasoning</div>
-                          <div style={{ whiteSpace: 'pre-wrap' }}>{m.plan}</div>
-                        </div>
-                      )}
-                      <div style={{
+                    {jarvisChat.map((m, i) => (
+                      <div key={i} style={{
                         alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-                        background: m.role === 'user' ? 'var(--accent)' : 'rgba(255,255,255,0.05)',
-                        padding: '12px 18px',
-                        borderRadius: m.role === 'user' ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
-                        fontSize: 14,
-                        lineHeight: 1.5,
-                        border: m.role === 'jarvis' ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                        color: m.role === 'user' ? '#000' : '#fff'
+                        maxWidth: '80%',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8
                       }}>
-                        {m.text}
+                        {m.plan && (
+                          <div style={{
+                            background: 'rgba(0,0,0,0.3)',
+                            border: '1px solid rgba(0,255,255,0.1)',
+                            borderRadius: '8px',
+                            padding: '10px',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            color: '#0ff',
+                            opacity: 0.8
+                          }}>
+                            <div style={{ marginBottom: 4, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Step-by-step Reasoning</div>
+                            <div style={{ whiteSpace: 'pre-wrap' }}>{m.plan}</div>
+                          </div>
+                        )}
+                        <div className={m.role === 'user' ? 'chat-msg-user' : 'chat-msg-jarvis'}>
+                          <div className={m.role === 'user' ? 'chat-msg-user-bubble' : 'chat-msg-jarvis-bubble'}>
+                            {m.text}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    {spinning && <div style={{ opacity: 0.5, fontSize: 12 }}>JARVIS is thinking...</div>}
+                    ))}
+                    {spinning && <div className="jarvis-thinking">JARVIS is thinking...</div>}
                   </div>
 
-                  <div className="terminal-input-row" style={{ padding: 12, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div className="jarvis-input-row">
                     <button
                       onClick={startListening}
-                      style={{
-                        width: 40, height: 40, borderRadius: '50%', background: listening ? 'var(--red)' : 'rgba(255,255,255,0.1)',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, border: 'none', cursor: 'pointer',
-                        transition: 'all 0.3s'
-                      }}
-                      className={listening ? 'pulsing' : ''}
+                      className={`mic-button ${listening ? 'active pulsing' : ''}`}
                     >
                       {listening ? '⏺' : '🎤'}
                     </button>
                     <input
+                      id="jarvis-input"
                       className="terminal-input"
                       value={jarvisMsg}
                       onChange={e => setJarvisMsg(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && askJarvis(jarvisMsg)}
                       placeholder={listening ? "Listening..." : "Type or speak to JARVIS..."}
+                      title="JARVIS Chat Input"
                     />
                     <button className="terminal-run-btn" onClick={() => askJarvis(jarvisMsg)} disabled={spinning || !jarvisMsg.trim()}>
                       {spinning ? "..." : "Send"}
@@ -838,19 +883,19 @@ export default function Home() {
                         });
                         fetchAll(true);
                         (e.target as HTMLFormElement).reset();
-                      } catch (err) {
+                      } catch {
                         setError("Failed to add lead");
                       } finally {
                         setSpinning(false);
                       }
                     }}>
-                      <div style={{ marginBottom: 12 }}>
-                        <label style={{ display: "block", fontSize: 12, marginBottom: 4, color: "var(--text-muted)" }}>Name</label>
-                        <input name="name" className="search-input" required />
+                      <div className="form-group">
+                        <label htmlFor="lead-name" className="form-label">Name</label>
+                        <input id="lead-name" name="name" className="search-input" required placeholder="Full Name" title="Enter lead name" />
                       </div>
-                      <div style={{ marginBottom: 16 }}>
-                        <label style={{ display: "block", fontSize: 12, marginBottom: 4, color: "var(--text-muted)" }}>Phone</label>
-                        <input name="phone" className="search-input" required />
+                      <div className="form-group">
+                        <label htmlFor="lead-phone" className="form-label">Phone</label>
+                        <input id="lead-phone" name="phone" className="search-input" required placeholder="+1 234..." title="Enter lead phone number" />
                       </div>
                       <button type="submit" className="terminal-run-btn" style={{ width: "100%", height: 40 }}>
                         🚀 Capture Lead
@@ -860,7 +905,7 @@ export default function Home() {
 
                   <div className="md:col-span-2">
                     <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                      <div style={{ overflowX: "auto" }}>
+                      <div className="crm-table-container">
                         <table className="data-table">
                           <thead>
                             <tr>
@@ -874,21 +919,14 @@ export default function Home() {
                             {leads.length > 0 ? (
                               leads.map((l, i) => (
                                 <tr key={i}>
-                                  <td style={{ color: "var(--accent)", fontWeight: 700 }}>{l.name}</td>
+                                  <td className="crm-name-cell">{l.name}</td>
                                   <td>{l.phone}</td>
                                   <td>
-                                    <span style={{
-                                      padding: "2px 8px",
-                                      background: "rgba(34,197,94,0.1)",
-                                      color: "rgb(34,197,94)",
-                                      borderRadius: 8,
-                                      fontSize: 10,
-                                      fontWeight: 700
-                                    }}>
+                                    <span className="crm-status-badge">
                                       {l.status}
                                     </span>
                                   </td>
-                                  <td style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                                  <td className="crm-date-cell">
                                     {l.date ? new Date(l.date).toLocaleDateString() : '—'}
                                   </td>
                                 </tr>
@@ -903,16 +941,72 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="card" style={{ background: "rgba(255,0,51,0.02)", border: "1px dashed rgba(255,0,51,0.2)" }}>
-                  <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-                    <div style={{ fontSize: 24 }}>🛡️</div>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: 14 }}>Cloud Sync Active</div>
-                      <div style={{ fontSize: 12, opacity: 0.6 }}>Every lead captured here is instantly mirrored to Google Sheets and Firebase.</div>
-                    </div>
+                <div className="card crm-footer-card">
+                  <div style={{ fontSize: 24 }}>🛡️</div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>Cloud Sync Active</div>
+                    <div style={{ fontSize: 12, opacity: 0.6 }}>Every lead captured here is instantly mirrored to Google Sheets and Firebase.</div>
                   </div>
                 </div>
               </>
+            )
+          }
+
+          {/* ── AI BROWSER ────────────────────────────────────────────── */}
+          {
+            tab === "browser" && (
+              <div className="browser-container">
+                <div className="browser-header">
+                  <div className="flex gap-2">
+                    <button className="browser-nav-btn" title="Go Back"><ChevronLeft size={16} /></button>
+                    <button className="browser-nav-btn" title="Go Forward"><ChevronRight size={16} /></button>
+                    <button className="browser-nav-btn" title="Reload Page"><RotateCw size={14} /></button>
+                  </div>
+                  <div className="browser-address flex items-center gap-2">
+                    <ShieldCheck size={14} color="var(--green)" />
+                    <span>https://openclaw.ai/automation-dashboard</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="action-btn browser-action-btn-small"><Search size={14} /> AI Search</button>
+                    <button className="action-btn green browser-action-btn-small"><Zap size={14} /> Auto-Fill</button>
+                  </div>
+                </div>
+
+                <div className="browser-main">
+                  <div className="browser-viewport">
+                    <div className="browser-mock-content">
+                      <Layout size={64} className="mb-4 text-accent mx-auto" />
+                      <div className="text-xl font-bold mb-2">Automation Layer Active</div>
+                      <div className="text-sm">Browsing in High-Speed AI Proxy Mode</div>
+                    </div>
+                  </div>
+
+                  <div className="automation-console">
+                    <div className="console-header">
+                      <span>Live Reasoning</span>
+                      <span className="flex items-center gap-1">
+                        <span className="pulsing console-dot"></span>
+                        ACTIVE
+                      </span>
+                    </div>
+                    <div className="console-body">
+                      {browserLogs.map((log, i) => (
+                        <div key={i} className="thought-bubble">
+                          <div className={`text-[10px] mb-1 ${log.type === 'ACTION' ? 'text-green' : log.type === 'VERIFICATION' ? 'text-gold' : 'text-accent'}`}>{log.type}</div>
+                          <div>{log.text}</div>
+                        </div>
+                      ))}
+                      <div className="waiting-text">Waiting for next command...</div>
+                    </div>
+                    <div className="automation-actions">
+                      <button className="action-btn"><Search size={14} /> Scrape Leads</button>
+                      <button className="action-btn"><RefreshCw size={14} /> Sync CRM</button>
+                      <button className="action-btn"><ExternalLink size={14} /> Export CSV</button>
+                      <button className="action-btn green"><Zap size={14} /> Deploy Bot</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )
           }
 
