@@ -26,8 +26,6 @@ import {
   Layout
 } from "lucide-react";
 
-const logo = { src: "/logo.png" };
-
 // ── Config ───────────────────────────────────────────────────────────────────
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 const KEY = process.env.NEXT_PUBLIC_API_KEY ?? "";
@@ -237,20 +235,24 @@ export default function Home() {
   };
 
   const startListening = () => {
-    const win = window as unknown as { SpeechRecognition: any; webkitSpeechRecognition: any };
-    const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+    const win = window as unknown as {
+      SpeechRecognition: typeof SpeechRecognition;
+      webkitSpeechRecognition: typeof SpeechRecognition;
+    };
+    const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
+    if (!SpeechRecognitionClass) {
       alert("Speech recognition not supported in this browser.");
       return;
     }
-    const rec = new SpeechRecognition();
+    const rec = new SpeechRecognitionClass();
     rec.continuous = false;
     rec.interimResults = false;
     rec.lang = 'en-US';
 
     rec.onstart = () => setListening(true);
     rec.onend = () => setListening(false);
-    rec.onresult = (e: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
       const transcript = e.results[0][0].transcript;
       setJarvisMsg(transcript);
       askJarvis(transcript);
