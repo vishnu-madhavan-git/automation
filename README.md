@@ -54,3 +54,25 @@ python agents/hello.py
 - `npm run ui` - starts Next.js UI
 - `npm run core` - starts Express API
 - `npm run agent` - runs hello agent directly
+## Dubai Villa Lead Scraper
+
+Two scraper agents for collecting direct villa owner contacts in Dubai:
+
+### Basic Scraper (no API key needed)
+```bash
+python agents/dubai_villa_scraper.py --source both --area "Palm Jumeirah" --max 30
+```
+
+### Apify Scraper (faster, more reliable)
+Requires `APIFY_TOKEN` in `.env`
+```bash
+python agents/apify_dubai_scraper.py --area "Emirates Hills" --max 100
+```
+
+Leads are saved to `data/state/villa_leads.json` and can be synced to Google Sheets via `core/leads-bridge.js`.
+
+### Sync to Sheets
+```js
+const { syncLeadsToSheets } = require('./core/leads-bridge');
+await syncLeadsToSheets();
+```
